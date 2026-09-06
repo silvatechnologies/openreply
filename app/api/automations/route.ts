@@ -136,7 +136,8 @@ const updateAutomationSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const workspaceId = await getCurrentWorkspaceId();
+  const workspaceId =
+    (await workspaceFromApiKey(request))?.workspaceId ?? (await getCurrentWorkspaceId());
   if (!workspaceId) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },

@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
+import { workspaceFromApiKey } from "@/lib/api-key";
 import { prisma } from "@/lib/db/client";
 
 export const runtime = "nodejs";
@@ -10,8 +11,11 @@ export const runtime = "nodejs";
  * runs the full analytics aggregation. Pages that only need the account list
  * (e.g. the inbox) should use this so they aren't gated on heavy stats.
  */
-export async function GET() {
-  const workspaceId = await getCurrentWorkspaceId();
+export async function GET(request: NextRequest) {
+  // Also reachable with an API key: the publisher needs the account id to
+  // create a campaign, and it has no browser session. See lib/api-key.ts.
+  const workspaceId =
+    (await workspaceFromApiKey(request))?.workspaceId ?? (await getCurrentWorkspaceId());
   if (!workspaceId) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
