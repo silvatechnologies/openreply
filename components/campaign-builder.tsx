@@ -402,7 +402,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       instagramAccountId: selectedAccountId,
       postId: triggerScope === "specific" ? postId : null,
       postUrl: triggerScope === "specific" ? postUrl : null,
-      matchAnyPost: triggerScope === "any",
+      // Always false: "any post" is gone. A campaign that matches every post
+      // of an account answers itself -- 50 DMs in 62 seconds on 2026-09-03.
+      // The API rejects `true` outright; this keeps the payload honest.
+      matchAnyPost: false,
       pendingNextReel: triggerScope === "next",
       matchAnyWord: matchMode === "any",
       keywords: matchMode === "any" ? [] : keywords,
@@ -684,12 +687,6 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               />
             </div>
           )}
-          <Radio
-            checked={triggerScope === "any"}
-            onSelect={() => setTriggerScope("any")}
-          >
-            any post or reel
-          </Radio>
           <Radio
             checked={triggerScope === "next"}
             onSelect={() => setTriggerScope("next")}

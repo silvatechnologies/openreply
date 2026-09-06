@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
+import { workspaceFromApiKey } from "@/lib/api-key";
 import { prisma } from "@/lib/db/client";
 import { calculateCtr, normalizeTopKeywords } from "@/lib/tracking/analytics";
 import { buildTrackedUrl } from "@/lib/tracking/message";
@@ -23,7 +24,20 @@ const createAutomationSchema = z
     postId: z.string().min(1).optional().nullable(),
     postUrl: z.string().url().optional().nullable(),
     pendingNextReel: z.boolean().optional().default(false),
-    matchAnyPost: z.boolean().optional().default(false),
+    // 🚨 Not a boolean any more: only `false` parses.
+    //
+    // A campaign that matches any post of an account answers ITSELF. Our
+    // captions contain each other's keywords -- the WEB dm opens with "the
+    // eight things I look at in a web..." -- so on 2026-09-03 this flag
+    // produced 50 DMs in 62 seconds between our own accounts, and a second
+    // storm after that. Alex's rule since: a keyword belongs to ONE post.
+    //
+    // It stays in the schema as a literal, rather than being deleted, so a
+    // caller that still sends `true` gets a 400 that names the field instead
+    // of having it silently ignored. The database column is untouched on
+    // purpose: dropping it would need a migration ordered against a running
+    // deployment, and with nothing able to set it the column is inert.
+    matchAnyPost: z.literal(false).optional().default(false),
     keywords: z.array(z.string().min(1).max(50)).max(10).optional().default([]),
     matchAnyWord: z.boolean().optional().default(false),
     dmTriggerEnabled: z.boolean().optional().default(false),
@@ -61,10 +75,10 @@ const createAutomationSchema = z
     isActive: z.boolean().optional().default(true),
     wholeWordMatch: z.boolean().optional().default(true),
   })
-  // A campaign must target a specific post, any post, or the next reel.
+  // A campaign must target a specific post, or wait for the next reel.
   .refine(
-    (d) => d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
-    { message: "Choose which post(s) trigger the campaign", path: ["postId"] }
+    (d) => d.pendingNextReel || Boolean(d.postId),
+    { message: "Choose which post triggers the campaign", path: ["postId"] }
   )
   // And it must match either specific words or any word.
   .refine((d) => d.matchAnyWord || d.keywords.length >= 1, {
@@ -86,7 +100,7 @@ const updateAutomationSchema = z.object({
   postId: z.string().min(1).optional().nullable(),
   postUrl: z.string().url().optional().nullable(),
   pendingNextReel: z.boolean().optional(),
-  matchAnyPost: z.boolean().optional(),
+  matchAnyPost: z.literal(false).optional(),
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
   matchAnyWord: z.boolean().optional(),
   dmTriggerEnabled: z.boolean().optional(),
@@ -276,7 +290,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const context = await getCurrentWorkspaceContext();
+  // An API key stands in for a session, so the publisher can create a
+  // campaign the moment a post exists. See lib/api-key.ts for why.
+  const context =
+    (await workspaceFromApiKey(request)) ?? (await getCurrentWorkspaceContext());
   if (!context) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -446,7 +463,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const context = await getCurrentWorkspaceContext();
+  const context =
+    (await workspaceFromApiKey(request)) ?? (await getCurrentWorkspaceContext());
   if (!context) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -518,8 +536,8 @@ export async function PATCH(request: NextRequest) {
     automationData.followUpMessage = null;
     automationData.followUpDelayMinutes = 0;
   }
-  // Any-post / next-reel campaigns carry no specific post.
-  if (automationData.matchAnyPost === true || automationData.pendingNextReel === true) {
+  // A next-reel campaign carries no specific post yet.
+  if (automationData.pendingNextReel === true) {
     automationData.postId = null;
     automationData.postUrl = null;
   }
